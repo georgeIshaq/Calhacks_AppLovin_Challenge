@@ -137,6 +137,7 @@ class RollupBuilder:
         rollup_specs = [
             ('day_type', ['day', 'type']),
             ('hour_type', ['hour', 'type']),
+            ('minute_type', ['minute', 'type']),
             ('week_type', ['week', 'type']),
             ('country_type', ['country', 'type']),
             ('advertiser_type', ['advertiser_id', 'type']),
@@ -144,6 +145,8 @@ class RollupBuilder:
             ('day_country_type', ['day', 'country', 'type']),
             ('day_advertiser_type', ['day', 'advertiser_id', 'type']),
             ('hour_country_type', ['hour', 'country', 'type']),
+            # Note: day_publisher_country_type would be 78M rows (OOM)
+            # Q2 will use fallback: filter raw data by date/country, then aggregate by publisher
         ]
         
         # Initialize intermediate results storage

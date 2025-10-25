@@ -37,6 +37,7 @@ data-lite/
 *.parquet
 *.db
 *.duckdb
+*.arrow
 
 # Results (optional - you may want to commit these)
 # results/

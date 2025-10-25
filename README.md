@@ -150,14 +150,38 @@ Queries are provided as JSON with the following structure:
 - **Creativity (20%)**: Novel/elegant approaches
 - **Documentation (10%)**: Clear presentation
 
+## Analysis & Planning
+
+📊 **Preliminary Test Results**: See [`docs/PRELIMINARY_TEST_RESULTS.md`](docs/PRELIMINARY_TEST_RESULTS.md)  
+📋 **Optimization Strategy**: See [`docs/OPTIMIZATION_STRATEGY.md`](docs/OPTIMIZATION_STRATEGY.md)
+
+### Key Findings
+- **225M rows**, 19GB raw data, 366 days (2024)
+- **Type partitioning**: 80% of queries filter by type → 65-99% data skip
+- **Pre-aggregations**: Reduce to 1.5K-6K rows (vs 225M) → 1000-10000× speedup
+- **LZ4 compression**: 3GB/s decompression on M2, 3× compression ratio
+- **Expected total speedup**: 260-1300× (baseline 65s → target <500ms)
+
+### Analysis Tools
+```bash
+# Analyze query patterns and data characteristics
+python src/analysis/predicate_stats.py
+
+# Benchmark compression strategies
+python src/analysis/compression_bench.py
+
+# Analyze data distribution and selectivity
+python src/analysis/data_distribution.py --sample-ratio 0.2
+```
+
 ## Next Steps
 
-1. Extract and explore the baseline code
-2. Run baseline benchmarks and record timings
-3. Analyze query patterns and data characteristics
-4. Design your optimized system architecture
-5. Implement, test, and benchmark your solution
-6. Document your approach and results
+1. ✅ Extract and explore the baseline code
+2. ✅ Run baseline benchmarks and record timings (65.18s total)
+3. ✅ Analyze query patterns and data characteristics
+4. ⏭️ Design your optimized system architecture
+5. ⏭️ Implement, test, and benchmark your solution
+6. ⏭️ Document your approach and results
 
 ## Resources
 

@@ -1,0 +1,12 @@
+{
+  "select": ["minute", {"SUM": "bid_price"}],
+  "from": "events",
+  "where": [
+    {"col": "type", "op": "eq", "val": "impression"},
+    {"col": "day", "op": "eq", "val": "2024-06-01"}
+  ],
+  "group_by": ["minute"],
+  "order_by": [
+    {"col": "minute", "dir": "asc"}
+  ]
+}

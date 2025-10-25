@@ -1,0 +1,8 @@
+{
+  "select": ["advertiser_id", "type", {"COUNT": "*"}],
+  "from": "events",
+  "group_by": ["advertiser_id", "type"],
+  "order_by": [
+    {"col": "COUNT(*)", "dir": "desc"}
+  ]
+}

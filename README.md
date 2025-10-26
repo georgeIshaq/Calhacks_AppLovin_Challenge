@@ -1,6 +1,6 @@
 # CalHacks AppLovin Database Challenge - Optimized Solution
 
-**🏆 1,600× Faster than Baseline** - 39ms vs 62 seconds
+**🏆 1,600× Faster than Baseline on the 5 example queries** - 39ms vs 62 seconds
 
 Pre-aggregated rollup tables + intelligent query routing = sub-100ms query execution.
 
@@ -10,8 +10,8 @@ Pre-aggregated rollup tables + intelligent query routing = sub-100ms query execu
 
 ```bash
 pip install -r requirements.txt
-python3 prepare.py --data-dir ./data    # One-time build: ~11-15 min
-python3 run.py                           # Query execution: ~40ms
+python3 prepare.py --data-dir ./data    # One-time build: ~11-15 min on m3 air, should be faster on m2 pro
+python3 run.py                           # Query execution on 5 example queries: ~40ms
 ```
 
 ---

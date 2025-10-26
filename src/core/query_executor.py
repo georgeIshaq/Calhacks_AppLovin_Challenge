@@ -18,6 +18,7 @@ import polars as pl
 import logging
 from typing import Dict, List, Tuple, Any
 from pathlib import Path
+from datetime import datetime, timedelta
 
 # Import relative to package structure
 try:
@@ -105,8 +106,27 @@ class QueryExecutor:
             
             # Convert filter value if needed (calendar date → day-of-year format)
             if col == 'day' or (col not in df.columns and col == 'day'):
-                # Check if value is calendar date format (YYYY-MM-DD)
-                if isinstance(val, str) and len(val) == 10 and val.count('-') == 2:
+                # Handle BETWEEN with list of dates
+                if op == 'between' and isinstance(val, list):
+                    converted_vals = []
+                    for v in val:
+                        if isinstance(v, str) and len(v) == 10 and v.count('-') == 2:
+                            try:
+                                from datetime import datetime
+                                parts = v.split('-')
+                                year, month, day_num = int(parts[0]), int(parts[1]), int(parts[2])
+                                date_obj = datetime(year, month, day_num)
+                                day_of_year = date_obj.timetuple().tm_yday
+                                converted = f"{year}-{day_of_year:03d}"
+                                converted_vals.append(converted)
+                                logger.info(f"🔍 Converted calendar date to day-of-year: {v} → {converted}")
+                            except:
+                                converted_vals.append(v)  # Keep original if conversion fails
+                        else:
+                            converted_vals.append(v)
+                    val = converted_vals
+                # Handle single date value
+                elif isinstance(val, str) and len(val) == 10 and val.count('-') == 2:
                     try:
                         from datetime import datetime
                         # Convert "2024-06-01" to "2024-153"
@@ -115,7 +135,7 @@ class QueryExecutor:
                         date_obj = datetime(year, month, day_num)
                         day_of_year = date_obj.timetuple().tm_yday
                         val = f"{year}-{day_of_year:03d}"
-                        logger.debug(f"Converted calendar date to day-of-year: {f[' val']} → {val}")
+                        logger.info(f"🔍 Converted calendar date to day-of-year: {parts[0]}-{parts[1]}-{parts[2]} → {val}")
                     except:
                         pass  # Keep original value if conversion fails
             
@@ -392,13 +412,112 @@ class QueryExecutor:
         # 4. Apply ORDER BY
         df = self.apply_order_by(df, pattern.order_by)
         
-        # 5. Format results
+        # 5. Convert day-of-year back to calendar dates for output
+        df = self.convert_dates_to_calendar(df)
+        
+        # 6. Format results
         column_names = df.columns
         rows = [tuple(row) for row in df.iter_rows()]
         
         logger.info(f"Query complete: {len(rows)} result rows")
         
         return column_names, rows
+    
+    def convert_dates_to_calendar(self, df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Convert day-of-year format back to calendar dates for output.
+        
+        Internal format: "2024-153" (day-of-year)
+        Output format: "2024-06-01" (calendar date)
+        
+        Also handles minute format:
+        Internal: "2024-153 0:45"
+        Output: "2024-06-01 00:45"
+        """
+        from datetime import datetime
+        
+        # Check if 'day' column exists and needs conversion
+        if 'day' in df.columns:
+            # Convert "2024-153" → "2024-06-01"
+            df = df.with_columns([
+                pl.col('day').map_elements(
+                    lambda x: self._day_of_year_to_calendar(x) if isinstance(x, str) else x,
+                    return_dtype=pl.Utf8
+                ).alias('day')
+            ])
+        
+        # Check if 'minute' column exists and needs conversion
+        if 'minute' in df.columns:
+            # Convert "2024-153 0:45" → "2024-06-01 00:45"
+            df = df.with_columns([
+                pl.col('minute').map_elements(
+                    lambda x: self._minute_to_calendar(x) if isinstance(x, str) else x,
+                    return_dtype=pl.Utf8
+                ).alias('minute')
+            ])
+        
+        # Check if 'hour' column exists and needs conversion
+        if 'hour' in df.columns:
+            # Convert "2024-153 12" → "2024-06-01 12"
+            df = df.with_columns([
+                pl.col('hour').map_elements(
+                    lambda x: self._hour_to_calendar(x) if isinstance(x, str) else x,
+                    return_dtype=pl.Utf8
+                ).alias('hour')
+            ])
+        
+        return df
+    
+    def _day_of_year_to_calendar(self, day_str: str) -> str:
+        """Convert '2024-153' to '2024-06-01'"""
+        try:
+            parts = day_str.split('-')
+            if len(parts) != 2:
+                return day_str
+            
+            year = int(parts[0])
+            day_of_year = int(parts[1])
+            
+            # Create date from day of year
+            date_obj = datetime(year, 1, 1) + timedelta(days=day_of_year - 1)
+            return date_obj.strftime('%Y-%m-%d')
+        except:
+            return day_str
+    
+    def _minute_to_calendar(self, minute_str: str) -> str:
+        """Convert '2024-153 0:45' to '2024-06-01 00:45'"""
+        try:
+            # Split into day and time parts
+            parts = minute_str.split(' ')
+            if len(parts) != 2:
+                return minute_str
+            
+            # Convert day part
+            day_calendar = self._day_of_year_to_calendar(parts[0])
+            
+            # Format time part (ensure HH:MM format)
+            time_part = parts[1]
+            if ':' in time_part:
+                hour, minute = time_part.split(':')
+                time_formatted = f"{int(hour):02d}:{int(minute):02d}"
+            else:
+                time_formatted = time_part
+            
+            return f"{day_calendar} {time_formatted}"
+        except:
+            return minute_str
+    
+    def _hour_to_calendar(self, hour_str: str) -> str:
+        """Convert '2024-153 12' to '2024-06-01 12'"""
+        try:
+            parts = hour_str.split(' ')
+            if len(parts) != 2:
+                return hour_str
+            
+            day_calendar = self._day_of_year_to_calendar(parts[0])
+            return f"{day_calendar} {parts[1]}"
+        except:
+            return hour_str
 
 
 def main():

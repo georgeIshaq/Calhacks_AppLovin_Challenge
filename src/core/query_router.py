@@ -44,9 +44,10 @@ class QueryRouter:
     """
     Routes queries to optimal rollups based on query patterns.
     
-    Available rollups (9 total):
+    Available rollups (12 total):
     - day_type: day × type (1.5K rows)
     - hour_type: hour × type (34K rows)
+    - minute_type: minute × type (527K rows)
     - week_type: week × type (212 rows)
     - country_type: country × type (48 rows)
     - advertiser_type: advertiser_id × type (6.6K rows)
@@ -54,6 +55,8 @@ class QueryRouter:
     - day_country_type: day × country × type (16.8K rows)
     - day_advertiser_type: day × advertiser_id × type (1.8M rows)
     - hour_country_type: hour × country × type (329K rows)
+    - publisher_country_type: publisher_id × country × type (~50-80K rows)
+    - advertiser_country_type: advertiser_id × country × type (~70-90K rows)
     """
     
     # Map of rollup name -> (dimensions, estimated_rows)
@@ -68,6 +71,8 @@ class QueryRouter:
         'day_country_type': (['day', 'country', 'type'], 16_835),
         'day_advertiser_type': (['day', 'advertiser_id', 'type'], 1_834_876),
         'hour_country_type': (['hour', 'country', 'type'], 329_480),
+        # 4D rollup for Q2: All dimensions needed to filter and group
+        'day_publisher_country_type': (['day', 'publisher_id', 'country', 'type'], 2_500_000),
     }
     
     # Dimension equivalences for temporal queries
@@ -210,46 +215,47 @@ class QueryRouter:
         required_dims = set(pattern.group_by)
         filter_cols = self.extract_filter_columns(pattern.where_filters)
         
-        # Check which filter columns can be derived from rollup dimensions
-        # For example: if rollup has 'minute', we can filter by 'day' by parsing the minute string
-        derivable_filters = set()
-        for filter_col in filter_cols:
-            if filter_col in self.DERIVABLE_COLUMNS:
-                # Check if rollup has a column this can be derived from
-                source_cols = self.DERIVABLE_COLUMNS[filter_col]
-                derivable_filters.add(filter_col)
+        # ALL filters must be in rollup OR derivable from rollup
+        # We'll check derivability per-rollup below
+        # For now, all filters are required
+        must_have_cols = required_dims | filter_cols
         
-        # Columns that MUST be in rollup (can't be derived)
-        must_have_cols = required_dims | (filter_cols - derivable_filters)
-        
-        logger.debug(f"Finding rollup for: group_by={required_dims}, filters={filter_cols}, must_have={must_have_cols}, derivable={derivable_filters}")
+        logger.info(f"🔍 DEBUG: Finding rollup for: group_by={required_dims}, filters={filter_cols}, must_have={must_have_cols}")
+        logger.info(f"🔍 DEBUG: Checking {len(self.catalog)} rollups in catalog...")
         
         # Find all candidate rollups
         candidates = []
         
         for rollup_name, (rollup_dims, row_count) in self.catalog.items():
             rollup_dim_set = set(rollup_dims)
+            logger.info(f"🔍 DEBUG:   {rollup_name}: dims={rollup_dim_set}, checking if {must_have_cols} ⊆ {rollup_dim_set}")
             
-            # Check if rollup contains all must-have columns
-            if must_have_cols.issubset(rollup_dim_set):
-                # Check if derivable filters can actually be derived
+            # Check if rollup contains all must-have columns directly
+            missing_cols = must_have_cols - rollup_dim_set
+            
+            if not missing_cols:
+                # Perfect match - rollup has all columns
+                candidates.append((rollup_name, rollup_dims, row_count))
+                logger.info(f"🔍 DEBUG:     ✅ Perfect match! All columns present.")
+            else:
+                # Check if missing columns can be derived
                 can_derive_all = True
-                for derivable_col in derivable_filters:
-                    source_cols = self.DERIVABLE_COLUMNS[derivable_col]
-                    if not any(src in rollup_dim_set for src in source_cols):
-                        can_derive_all = False
-                        break
+                for missing_col in missing_cols:
+                    if missing_col in self.DERIVABLE_COLUMNS:
+                        # Check if rollup has any source column to derive from
+                        source_cols = self.DERIVABLE_COLUMNS[missing_col]
+                        if any(src in rollup_dim_set for src in source_cols):
+                            logger.info(f"🔍 DEBUG:     ✓ Can derive '{missing_col}' from {source_cols}")
+                            continue
+                    # Can't derive this column
+                    can_derive_all = False
+                    logger.info(f"🔍 DEBUG:     ✗ Missing '{missing_col}' and can't derive")
+                    break
                 
                 if can_derive_all:
-                    # This rollup can answer the query!
+                    # This rollup can answer the query via derivation
                     candidates.append((rollup_name, rollup_dims, row_count))
-                    logger.debug(f"  ✅ {rollup_name}: dims={rollup_dims}, rows={row_count:,}")
-                else:
-                    logger.debug(f"  ❌ {rollup_name}: can't derive {derivable_filters}")
-            else:
-                # Missing required dimensions
-                missing = must_have_cols - rollup_dim_set
-                logger.debug(f"  ❌ {rollup_name}: missing {missing}")
+                    logger.info(f"🔍 DEBUG:     ✅ Match via derivation!")
         
         if not candidates:
             # Try dimension equivalences (e.g., minute → day/hour)

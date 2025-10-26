@@ -34,60 +34,105 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_queries(query_dir: Path, include_test_queries: bool = False):
-    """Load all query JSON files from directory."""
-    queries = []
+def load_queries(query_file=None, query_dir=None):
+    """
+    Load queries from various sources.
     
-    # Try loading from baseline/inputs.py format
-    try:
-        from baseline.inputs import queries as baseline_queries
-        if not include_test_queries:
-            return baseline_queries
-        else:
-            queries = baseline_queries.copy()
-    except:
-        pass
+    Priority order:
+    1. --query-file <path.json> - JSON file with query list
+    2. --query-dir <dir/inputs.py> - Python file with queries list
+    3. baseline/inputs.py (default)
     
-    # Load additional test queries if flag is set
-    if include_test_queries:
-        pattern = '*.json'  # Load all JSON files
-    else:
-        pattern = 'q*.json'  # Load only standard q*.json files
-        
-    for query_file in sorted(query_dir.glob(pattern)):
+    Args:
+        query_file: Path to JSON file containing query list (optional)
+        query_dir: Path to directory containing inputs.py (optional)
+    
+    Returns:
+        List of query dictionaries
+    """
+    # Option 1: Load from JSON file
+    if query_file and Path(query_file).exists():
+        logger.info(f"Loading queries from JSON: {query_file}")
         with open(query_file) as f:
-            query = json.load(f)
-            queries.append(query)
+            queries = json.load(f)
+            if not isinstance(queries, list):
+                queries = [queries]
+            return queries
     
-    return queries
+    # Option 2: Load from query_dir/inputs.py
+    if query_dir and Path(query_dir).exists():
+        inputs_path = Path(query_dir) / 'inputs.py'
+        if inputs_path.exists():
+            logger.info(f"Loading queries from Python: {inputs_path}")
+            sys.path.insert(0, str(query_dir))
+            try:
+                import inputs  # type: ignore
+                return inputs.queries
+            except (ImportError, AttributeError) as e:
+                logger.warning(f"Could not import queries from {inputs_path}: {e}")
+            finally:
+                if str(query_dir) in sys.path:
+                    sys.path.remove(str(query_dir))
+    
+    # Option 3: Default to baseline/inputs.py
+    logger.info("Loading queries from baseline/inputs.py (default)")
+    try:
+        from baseline.inputs import queries
+        return queries
+    except ImportError:
+        logger.error("Could not load queries from baseline/inputs.py")
+        logger.error("Please provide --query-file or --query-dir")
+        return []
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run phase: Execute queries against rollup tables"
+        description="Run phase: Execute queries against rollup tables",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Use default queries from baseline/inputs.py
+  python3 run.py
+  
+  # Use custom query JSON file
+  python3 run.py --query-file ./queries/judges.json
+  
+  # Use queries from Python file (queries/inputs.py)
+  python3 run.py --query-dir ./queries
+  
+  # Specify custom output location
+  python3 run.py --output-dir ./my_results
+        """
     )
     parser.add_argument(
         '--rollup-dir',
         type=Path,
         default=Path('rollups'),
-        help='Directory containing rollup files'
+        help='Directory containing rollup files (default: ./rollups)'
+    )
+    parser.add_argument(
+        '--query-file',
+        type=Path,
+        default=None,
+        help='JSON file containing query list (e.g., queries.json)'
     )
     parser.add_argument(
         '--query-dir',
         type=Path,
-        default=Path('queries'),
-        help='Directory containing query JSON files'
+        default=None,
+        help='Directory containing inputs.py with queries list'
     )
     parser.add_argument(
-        '--out-dir',
+        '--output-dir',
         type=Path,
         default=Path('results'),
-        help='Directory to write result CSV files'
+        help='Directory to write result CSV files (default: ./results)'
     )
     parser.add_argument(
-        '--test',
-        action='store_true',
-        help='Include test queries (test_*.json) in addition to standard queries'
+        '--fallback-path',
+        type=Path,
+        default=Path('fallback.duckdb'),
+        help='Path to DuckDB fallback database (default: ./fallback.duckdb)'
     )
     
     args = parser.parse_args()
@@ -97,8 +142,13 @@ def main():
     print("="*70)
     print()
     print(f"Rollup directory: {args.rollup_dir}")
-    print(f"Query directory:  {args.query_dir}")
-    print(f"Output directory: {args.out_dir}")
+    if args.query_file:
+        print(f"Query file:       {args.query_file}")
+    elif args.query_dir:
+        print(f"Query directory:  {args.query_dir}")
+    else:
+        print(f"Query source:     baseline/inputs.py (default)")
+    print(f"Output directory: {args.output_dir}")
     print()
     
     # Validate rollup directory
@@ -116,20 +166,18 @@ def main():
     logger.info(f"Found {len(rollup_files)} rollup files")
     
     # Create output directory
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
     
     # Load queries
-    logger.info("Loading queries...")
-    queries = load_queries(args.query_dir, include_test_queries=args.test)
+    logger.info("")
+    queries = load_queries(query_file=args.query_file, query_dir=args.query_dir)
     
     if not queries:
-        logger.error(f"No queries found in {args.query_dir}")
+        logger.error("No queries loaded!")
         sys.exit(1)
     
-    logger.info(f"Loaded {len(queries)} queries")
-    if args.test:
-        logger.info("  (including test queries)")
-    
+    logger.info(f"✅ Loaded {len(queries)} queries")
+    print()
     # Initialize query system
     logger.info("")
     logger.info("="*70)
@@ -145,9 +193,9 @@ def main():
         executor = QueryExecutor(loader)
         
         # Initialize fallback executor for queries without suitable rollups
-        # Pass DuckDB path if it exists
-        duckdb_path = args.rollup_dir / 'fallback.duckdb'
-        fallback = FallbackExecutor(Path('data'), duckdb_path=duckdb_path if duckdb_path.exists() else None)
+        # Use the fallback path from args
+        fallback_path = args.fallback_path if args.fallback_path.exists() else None
+        fallback = FallbackExecutor(Path('data'), duckdb_path=fallback_path)
     except Exception as e:
         logger.error(f"Failed to initialize query system: {e}", exc_info=True)
         sys.exit(1)
@@ -209,7 +257,7 @@ def main():
                 logger.info(f"  Result: {len(rows)} rows")
             
             # Write results to CSV
-            out_path = args.out_dir / f"q{i}.csv"
+            out_path = args.output_dir / f"q{i}.csv"
             with open(out_path, 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(cols)
@@ -271,7 +319,7 @@ def main():
     print(f"\nSuccess rate: {successes}/{len(queries)} queries")
     
     print()
-    print(f"Results written to: {args.out_dir}")
+    print(f"Results written to: {args.output_dir}")
     print("="*70)
     
     # Exit with error if any queries failed

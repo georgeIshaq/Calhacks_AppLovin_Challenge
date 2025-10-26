@@ -1,0 +1,12 @@
+{
+  "select": ["day", {"SUM": "bid_price"}, {"COUNT": "*"}],
+  "from": "events",
+  "where": [
+    {"col": "type", "op": "eq", "val": "impression"},
+    {"col": "country", "op": "eq", "val": "US"}
+  ],
+  "group_by": ["day"],
+  "order_by": [
+    {"col": "day", "dir": "asc"}
+  ]
+}

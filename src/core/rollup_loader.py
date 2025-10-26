@@ -126,7 +126,7 @@ class RollupLoader:
         
         df = pl.read_ipc(
             self.rollup_paths[name],
-            memory_map=True  # Zero-copy for Arrow IPC
+            memory_map=False  # Disable mmap to avoid warning with compressed files
         )
         
         load_time = (time.time() - start_time) * 1000
@@ -156,7 +156,7 @@ class RollupLoader:
         logger.debug(f"Loading partition: {base_name}/{partition_key}")
         start_time = time.time()
         
-        df = pl.read_ipc(partition_file, memory_map=True)
+        df = pl.read_ipc(partition_file, memory_map=False)
         
         load_time = (time.time() - start_time) * 1000
         logger.debug(f"  Loaded partition in {load_time:.1f}ms")

@@ -1,0 +1,8 @@
+{
+  "select": ["type", {"MIN": "bid_price"}, {"MAX": "bid_price"}, {"AVG": "bid_price"}],
+  "from": "events",
+  "where": [
+    {"col": "type", "op": "in", "val": ["impression", "click"]}
+  ],
+  "group_by": ["type"]
+}

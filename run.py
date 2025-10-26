@@ -34,19 +34,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def load_queries(query_dir: Path):
+def load_queries(query_dir: Path, include_test_queries: bool = False):
     """Load all query JSON files from directory."""
     queries = []
     
     # Try loading from baseline/inputs.py format
     try:
         from baseline.inputs import queries as baseline_queries
-        return baseline_queries
+        if not include_test_queries:
+            return baseline_queries
+        else:
+            queries = baseline_queries.copy()
     except:
         pass
     
-    # Try loading individual JSON files
-    for query_file in sorted(query_dir.glob('q*.json')):
+    # Load additional test queries if flag is set
+    if include_test_queries:
+        pattern = '*.json'  # Load all JSON files
+    else:
+        pattern = 'q*.json'  # Load only standard q*.json files
+        
+    for query_file in sorted(query_dir.glob(pattern)):
         with open(query_file) as f:
             query = json.load(f)
             queries.append(query)
@@ -75,6 +83,11 @@ def main():
         type=Path,
         default=Path('results'),
         help='Directory to write result CSV files'
+    )
+    parser.add_argument(
+        '--test',
+        action='store_true',
+        help='Include test queries (test_*.json) in addition to standard queries'
     )
     
     args = parser.parse_args()
@@ -107,13 +120,15 @@ def main():
     
     # Load queries
     logger.info("Loading queries...")
-    queries = load_queries(args.query_dir)
+    queries = load_queries(args.query_dir, include_test_queries=args.test)
     
     if not queries:
         logger.error(f"No queries found in {args.query_dir}")
         sys.exit(1)
     
     logger.info(f"Loaded {len(queries)} queries")
+    if args.test:
+        logger.info("  (including test queries)")
     
     # Initialize query system
     logger.info("")
@@ -130,7 +145,9 @@ def main():
         executor = QueryExecutor(loader)
         
         # Initialize fallback executor for queries without suitable rollups
-        fallback = FallbackExecutor(Path('data'))
+        # Pass DuckDB path if it exists
+        duckdb_path = args.rollup_dir / 'fallback.duckdb'
+        fallback = FallbackExecutor(Path('data'), duckdb_path=duckdb_path if duckdb_path.exists() else None)
     except Exception as e:
         logger.error(f"Failed to initialize query system: {e}", exc_info=True)
         sys.exit(1)

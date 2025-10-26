@@ -1,0 +1,12 @@
+{
+  "select": ["hour", "country", {"SUM": "bid_price"}],
+  "from": "events",
+  "where": [
+    {"col": "type", "op": "eq", "val": "impression"},
+    {"col": "country", "op": "in", "val": ["DE", "FR", "ES", "IT"]}
+  ],
+  "group_by": ["hour", "country"],
+  "order_by": [
+    {"col": "SUM(bid_price)", "dir": "desc"}
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "select": ["country", "type", {"COUNT": "*"}],
+  "from": "events",
+  "where": [
+    {"col": "country", "op": "in", "val": ["JP", "CN", "KR"]}
+  ],
+  "group_by": ["country", "type"]
+}

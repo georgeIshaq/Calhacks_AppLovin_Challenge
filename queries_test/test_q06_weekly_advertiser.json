@@ -1,0 +1,12 @@
+{
+  "select": ["day", "advertiser_id", {"SUM": "bid_price"}],
+  "from": "events",
+  "where": [
+    {"col": "type", "op": "eq", "val": "impression"},
+    {"col": "day", "op": "between", "val": ["2024-07-01", "2024-07-07"]}
+  ],
+  "group_by": ["day", "advertiser_id"],
+  "order_by": [
+    {"col": "day", "dir": "asc"}
+  ]
+}

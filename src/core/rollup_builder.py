@@ -22,6 +22,7 @@ import time as time_module
 import datetime
 import time
 from collections import defaultdict
+import os
 
 # Import relative to package structure
 try:
@@ -144,8 +145,9 @@ class RollupBuilder:
         # Initialize empty accumulators (one per rollup)
         accumulators = {}
         temp_partials = {}  # Temporary storage for batching folds
-        FOLD_BATCH_SIZE = 20  # Fold every 20 batches to reduce join overhead
-        
+        # Allow tuning via env var; default to larger batch folds to reduce merge overhead
+        FOLD_BATCH_SIZE = int(os.getenv('FOLD_BATCH_SIZE', '50'))  # Fold every N batches
+
         for rollup_name, dimensions in rollup_specs:
             # Create empty DataFrame with correct schema
             schema_dict = {dim: pl.Utf8 for dim in dimensions}
@@ -163,6 +165,7 @@ class RollupBuilder:
             accumulators[rollup_name] = pl.DataFrame(schema=schema_dict)
             temp_partials[rollup_name] = []
         
+        DEBUG_ROLLUP = bool(os.getenv('DEBUG_ROLLUP'))
         logger.info(f"\nBuilding {len(rollup_specs)} rollups with INCREMENTAL FOLDING...")
         logger.info(f"Reading {len(list(self.loader.data_dir.glob('*.csv')))} CSV files in batches...")
         logger.info(f"Memory strategy: Fold each batch immediately (bounded memory)")
@@ -199,7 +202,10 @@ class RollupBuilder:
                     column_types=arrow_schema,
                     strings_can_be_null=True
                 )
-                read_opts = pc.ReadOptions(block_size=64 * 1024 * 1024)  # 64MB batches
+                read_opts = pc.ReadOptions(
+                    block_size=256 * 1024 * 1024,  # 256MB blocks for faster I/O
+                    use_threads=True  # Explicitly enable threading
+                )
                 
                 reader = pc.open_csv(
                     csv_file,
@@ -280,8 +286,8 @@ class RollupBuilder:
                             pl.len().alias('row_count'),
                         ])
                         
-                        # DIAGNOSTIC: Track advertiser_type specifically
-                        if rollup_name == 'advertiser_type' and total_batches <= 2:
+                        # DIAGNOSTIC: Track advertiser_type specifically (only when debug enabled)
+                        if DEBUG_ROLLUP and rollup_name == 'advertiser_type' and total_batches <= 2:
                             logger.info(f"[DIAG] Batch {total_batches} for {rollup_name}: {len(batch_agg)} unique keys")
                             logger.info(f"[DIAG] Sample keys: {batch_agg.select(dimensions).head(5)}")
                         
@@ -290,8 +296,8 @@ class RollupBuilder:
                         
                         # Fold when we have enough partials (reduces expensive join ops)
                         if len(temp_partials[rollup_name]) >= FOLD_BATCH_SIZE:
-                            # DIAGNOSTIC: Before fold
-                            if rollup_name == 'advertiser_type':
+                            # DIAGNOSTIC: Before fold (only when debug enabled)
+                            if DEBUG_ROLLUP and rollup_name == 'advertiser_type':
                                 logger.info(f"[DIAG] BEFORE fold: {len(temp_partials[rollup_name])} partials to combine")
                                 total_rows_in_partials = sum(len(p) for p in temp_partials[rollup_name])
                                 logger.info(f"[DIAG] Total rows across partials: {total_rows_in_partials}")

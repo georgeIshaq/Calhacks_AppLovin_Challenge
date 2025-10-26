@@ -19,18 +19,40 @@ python3 run.py                           # Query execution on 5 example queries:
 ## For Judges: Testing Your Queries
 
 ```bash
-# Prepare (once)
+# Step 1: Prepare
 python3 prepare.py --data-dir <your-data-path>
 
-# Run with your queries
+# Step 2: Run with your 20 queries (queries should be a json array)
 python3 run.py --query-file ./your_queries.json
-# OR
-python3 run.py --query-dir ./queries    # if using inputs.py format
 
-# Results in ./results/q1.csv, q2.csv, ...
+# Results appear in ./results/q1.csv through q20.csv
 ```
 
-📖 See [JUDGE_SETUP.md](./JUDGE_SETUP.md) for query format and examples.
+**Your JSON file should be an array of query objects:**
+```json
+[
+  {
+    "select": ["day", {"SUM": "bid_price"}],
+    "from": "events",
+    "where": [{"col": "type", "op": "eq", "val": "impression"}],
+    "group_by": ["day"]
+  },
+  {
+    "select": ["country", {"AVG": "total_price"}],
+    "from": "events",
+    "where": [{"col": "type", "op": "eq", "val": "purchase"}],
+    "group_by": ["country"]
+  }
+  // ... your remaining 18 queries
+]
+```
+
+**Expected output:**
+- Execution time: <200ms for 20 queries
+- Summary showing which rollup handled each query
+- Individual CSV files for each query result
+
+📖 See [queries/README.md](./queries/README.md) for complete query format reference.
 
 ---
 

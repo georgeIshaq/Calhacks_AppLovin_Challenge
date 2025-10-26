@@ -245,7 +245,7 @@ class QueryExecutor:
                     if col == '*':
                         # COUNT(*) = sum of row counts
                         agg_exprs.append(
-                            pl.col('row_count').sum().alias('COUNT(*)')
+                            pl.col('row_count').sum().alias('count_star()')
                         )
                     else:
                         # COUNT(col) = sum of non-null counts
@@ -350,6 +350,9 @@ class QueryExecutor:
         
         for order in order_by:
             col = order['col']
+            # Normalize COUNT(*) to count_star() to match output column name
+            if col == 'COUNT(*)':
+                col = 'count_star()'
             direction = order.get('dir', 'asc').lower()
             
             sort_cols.append(col)
@@ -409,11 +412,12 @@ class QueryExecutor:
         # 3. Compute aggregates
         df = self.compute_aggregates(df, pattern.aggregates, pattern.group_by)
         
-        # 4. Apply ORDER BY
-        df = self.apply_order_by(df, pattern.order_by)
-        
-        # 5. Convert day-of-year back to calendar dates for output
+        # 4. Convert day-of-year back to calendar dates for output
+        # (Must be done BEFORE sorting because ORDER BY references calendar format columns)
         df = self.convert_dates_to_calendar(df)
+        
+        # 5. Apply ORDER BY (after date conversion so sorting works on calendar dates)
+        df = self.apply_order_by(df, pattern.order_by)
         
         # 6. Format results
         column_names = df.columns

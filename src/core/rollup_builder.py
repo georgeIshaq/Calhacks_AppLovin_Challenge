@@ -18,6 +18,8 @@ import pyarrow.csv as pc
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 import logging
+import time as time_module
+import datetime
 import time
 from collections import defaultdict
 
@@ -72,7 +74,7 @@ class RollupBuilder:
             Materialized DataFrame with aggregated data
         """
         logger.info(f"Building rollup: {name} (dimensions: {dimensions})")
-        start_time = time.time()
+        start_time = time_module.time()
         
         # Load data with time dimensions if not provided
         if lf is None:
@@ -101,7 +103,7 @@ class RollupBuilder:
         # Materialize the rollup
         df = rollup.collect()
         
-        build_time = time.time() - start_time
+        build_time = time_module.time() - start_time
         logger.info(f"✅ {name}: {len(df):,} rows in {build_time:.2f}s "
                    f"({df.estimated_size('mb'):.2f} MB)")
         
@@ -121,7 +123,7 @@ class RollupBuilder:
         Memory: ~2-4GB peak (vs 12+ GB with naive approach)
         Time: ~7-10 minutes for 245M rows
         """
-        start_time = time.time()
+        start_time = time_module.time()
         
         # Rollup specs optimized for 16GB RAM constraint
         rollup_specs = [
@@ -170,7 +172,7 @@ class RollupBuilder:
         csv_files = sorted(self.loader.data_dir.glob('*.csv'))
         total_batches = 0
         
-        batch_start = time.time()
+        batch_start = time_module.time()
         
         # Define PyArrow schema to avoid type inference issues
         arrow_schema = pa.schema([
@@ -187,7 +189,7 @@ class RollupBuilder:
         
         for file_idx, csv_file in enumerate(csv_files):
             if (file_idx + 1) % 10 == 0:
-                elapsed = time.time() - batch_start
+                elapsed = time_module.time() - batch_start
                 logger.info(f"  Processing file {file_idx+1}/{len(csv_files)} ({elapsed:.1f}s elapsed)...")
             
             # Read CSV with PyArrow in streaming mode with explicit schema
@@ -212,12 +214,45 @@ class RollupBuilder:
                     df_batch = pl.from_arrow(arrow_batch)
                     
                     # Add time dimensions to batch
-                    # CRITICAL: Match baseline's timezone behavior (PDT/PST for local system)
-                    # DuckDB's DATE(to_timestamp(ts)) uses local timezone, so we must too
+                    # CRITICAL: Match baseline's timezone behavior
+                    # DuckDB's DATE(to_timestamp(ts)) uses system's LOCAL timezone
+                    # We must use the system's local timezone too for consistency
+                    import time
+                    import datetime
+                    
+                    # Get system's local timezone
+                    # This ensures we match DuckDB's behavior on any machine
+                    local_tz = datetime.datetime.now(datetime.timezone.utc).astimezone().tzinfo
+                    local_tz_name = str(local_tz)  # e.g., "PDT", "EST", etc.
+                    
+                    # For Polars, we need a proper IANA timezone name
+                    # Use tzlocal to get the system timezone name
+                    try:
+                        from tzlocal import get_localzone
+                        local_tz_name = str(get_localzone())
+                    except:
+                        # Fallback: try to infer from time.timezone
+                        # This works on most Unix systems
+                        if time.daylight:
+                            utc_offset = -time.altzone
+                        else:
+                            utc_offset = -time.timezone
+                        
+                        # Common timezone mappings based on UTC offset
+                        # This is a simplified fallback
+                        offset_to_tz = {
+                            -28800: 'America/Los_Angeles',  # UTC-8 (PST)
+                            -25200: 'America/Los_Angeles',  # UTC-7 (PDT)
+                            -18000: 'America/New_York',     # UTC-5 (EST)
+                            -14400: 'America/New_York',     # UTC-4 (EDT)
+                            0: 'UTC',
+                        }
+                        local_tz_name = offset_to_tz.get(utc_offset, 'UTC')
+                    
                     df_batch = df_batch.with_columns([
                         pl.from_epoch(pl.col('ts'), time_unit='ms')
                           .dt.replace_time_zone('UTC')
-                          .dt.convert_time_zone('America/Los_Angeles')  # PDT/PST
+                          .dt.convert_time_zone(local_tz_name)
                           .alias('datetime'),
                     ]).with_columns([
                         pl.col('datetime').dt.strftime('%Y-%j').alias('day'),
@@ -300,7 +335,7 @@ class RollupBuilder:
                 logger.error(f"Error processing {csv_file}: {e}")
                 raise
         
-        scan_time = time.time() - batch_start
+        scan_time = time_module.time() - batch_start
         logger.info(f"\n✅ Scan complete: {total_batches} batches, {len(csv_files)} files in {scan_time:.1f}s")
         
         # Final fold: process any remaining partials
@@ -346,7 +381,7 @@ class RollupBuilder:
         for rollup_name in accumulators:
             logger.info(f"  ✅ {rollup_name}: {len(accumulators[rollup_name]):,} rows")
         
-        total_time = time.time() - start_time
+        total_time = time_module.time() - start_time
         
         logger.info("\n" + "="*60)
         logger.info(f"✅ INCREMENTAL FOLD BUILD COMPLETE: {len(accumulators)} rollups")
@@ -451,7 +486,7 @@ class RollupBuilder:
         logger.info("STREAMING BUILDER: True streaming aggregation")
         logger.info("="*60)
         
-        start_time = time.time()
+        start_time = time_module.time()
         
         # Get base lazy frame (no data loaded yet)
         logger.info("\nCreating streaming query plans...")
@@ -480,7 +515,7 @@ class RollupBuilder:
         rollups = {}
         
         for name, dimensions in rollup_specs:
-            rollup_start = time.time()
+            rollup_start = time_module.time()
             logger.info(f"  [{len(rollups)+1}/{len(rollup_specs)}] {name}...")
             
             # Build aggregation query plan
@@ -506,10 +541,10 @@ class RollupBuilder:
             # aggregates incrementally, never loads full data into memory
             rollups[name] = agg_plan.collect(streaming=True)
             
-            rollup_time = time.time() - rollup_start
+            rollup_time = time_module.time() - rollup_start
             logger.info(f"      ✅ {len(rollups[name]):,} rows in {rollup_time:.1f}s")
         
-        total_time = time.time() - start_time
+        total_time = time_module.time() - start_time
         
         logger.info("\n" + "="*60)
         logger.info(f"✅ STREAMING BUILD COMPLETE: {len(rollups)} rollups")
@@ -627,7 +662,7 @@ class RollupBuilder:
         logger.info("Building Partitioned Minute Rollup (366 day partitions)")
         logger.info("="*60)
         
-        start_total = time.time()
+        start_total = time_module.time()
         
         # Load data once
         lf = self.loader.load_with_time_dims()
@@ -671,7 +706,7 @@ class RollupBuilder:
             if i % 50 == 0:
                 logger.info(f"  Progress: {i}/{len(unique_days)} days complete")
         
-        total_time = time.time() - start_total
+        total_time = time_module.time() - start_total
         total_rows = sum(len(df) for df in partitions.values())
         avg_per_partition = total_rows / len(partitions)
         
@@ -699,7 +734,7 @@ class RollupBuilder:
         logger.info("STARTING FULL ROLLUP BUILD (OPTIMIZED)")
         logger.info("="*60)
         
-        start_total = time.time()
+        start_total = time_module.time()
         
         all_rollups = {}
         
@@ -713,7 +748,7 @@ class RollupBuilder:
         partitioned_rollups = self.build_partitioned_minute_rollup()
         all_rollups.update(partitioned_rollups)
         
-        total_time = time.time() - start_total
+        total_time = time_module.time() - start_total
         
         logger.info("\n" + "="*60)
         logger.info("✅✅✅ FULL ROLLUP BUILD COMPLETE ✅✅✅")
@@ -730,7 +765,7 @@ class RollupBuilder:
         minute_partitions = self.build_partitioned_minute_rollup()
         all_rollups.update(minute_partitions)
         
-        total_time = time.time() - start_total
+        total_time = time_module.time() - start_total
         total_rows = sum(len(df) for df in all_rollups.values())
         total_size_mb = sum(df.estimated_size('mb') for df in all_rollups.values())
         
